@@ -27,11 +27,10 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: 패키지 설치
-        run: pip install -r requirements.txt
-
-      - name: Playwright 브라우저 설치
-        run: python -m playwright install chromium --with-deps
+      - name: 패키지 및 Playwright 설치
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install chromium --with-deps
 
       - name: DB 캐시 복원
         uses: actions/cache@v4
