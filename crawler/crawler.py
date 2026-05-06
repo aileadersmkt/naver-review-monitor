@@ -101,16 +101,18 @@ def fetch_reviews_playwright(hospital: dict) -> list:
             for i, item in enumerate(review_items[:20]):
                 try:
                     author_el = item.query_selector("[class*='nickname'], [class*='author'], [class*='writer']")
-                    author = author_el.inner_text().strip() if author_el else "익명"
+                    author = author_el.text_content().strip() if author_el else "익명"
 
-                    content_el = item.query_selector("a.pui__GStJHb, [class*='body'], [class*='content'], p")
-                    content = content_el.inner_text().strip() if content_el else ""
+                    content_el = item.query_selector("a.pui__GStJHb")
+                    if not content_el:
+                        content_el = item.query_selector("[class*='body'], [class*='content'], p")
+                    content = content_el.text_content().strip() if content_el else ""
 
                     date_el = item.query_selector("[class*='date'], [class*='time'], time")
-                    created_at = date_el.inner_text().strip() if date_el else ""
+                    created_at = date_el.text_content().strip() if date_el else ""
 
                     visit_el = item.query_selector("[class*='visit'], [class*='count']")
-                    visit_text = visit_el.inner_text().strip() if visit_el else "0"
+                    visit_text = visit_el.text_content().strip() if visit_el else "0"
                     visit_count = int(''.join(filter(str.isdigit, visit_text)) or 0)
 
                     if content:
