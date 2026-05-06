@@ -1,8 +1,8 @@
 """
-네이버 플레이스 리뷰 크롤러 (병원용 — 다중 API 엔드포인트 시도)
+네이버 플레이스 리뷰 크롤러 (Playwright 브라우저 방식)
+실제 브라우저처럼 페이지를 열어서 리뷰를 수집
 """
 
-import requests
 import json
 import time
 import sqlite3
@@ -22,31 +22,6 @@ REQUEST_DELAY = CONFIG.get("request_delay_seconds", 4)
 NEG_KEYWORDS = CONFIG["sentiment"]["negative_keywords"]
 POS_KEYWORDS = CONFIG["sentiment"]["positive_keywords"]
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-]
-
-# 시도할 API 엔드포인트 목록
-API_ENDPOINTS = [
-    "https://m.place.naver.com/hospital/{place_id}/review/visitor",
-    "https://api.place.naver.com/graphql",
-    "https://place.map.naver.com/hospital/v1/summary/{place_id}/visitorReview",
-    "https://map.naver.com/p/api/place/summary/{place_id}/visitorReview",
-]
-
-def get_headers(place_id: str) -> dict:
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Referer": f"https://map.naver.com/p/entry/place/{place_id}",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Origin": "https://map.naver.com",
-        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"macOS"',
-    }
 
 def analyze_sentiment(content: str) -> str:
     if not content:
@@ -58,6 +33,7 @@ def analyze_sentiment(content: str) -> str:
     elif pos > neg:
         return "positive"
     return "neutral"
+
 
 def init_db():
     DB_PATH.parent.mkdir(exist_ok=True)
@@ -94,66 +70,68 @@ def init_db():
     conn.close()
     print("✅ DB 초기화 완료")
 
-def fetch_reviews_v2(hospital: dict, page: int = 1) -> list:
-    """모바일 API로 리뷰 수집"""
+
+def fetch_reviews_playwright(hospital: dict) -> list:
+    from playwright.sync_api import sync_playwright
     place_id = hospital["place_id"]
-    
-    # 모바일 API 시도
-    urls = [
-        f"https://m.place.naver.com/hospital/{place_id}/review/visitor?page={page}",
-        f"https://place.map.naver.com/place/v1/summary/{place_id}/visitorReview?page={page}&pageSize=10&type=visit",
-        f"https://place.map.naver.com/hospital/v1/summary/{place_id}/visitorReview?page={page}&pageSize=10&type=visit&isPhotoUsed=false",
-    ]
-    
-    mobile_headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Referer": f"https://m.place.naver.com/hospital/{place_id}/review/visitor",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "ko-KR,ko;q=0.9",
-    }
-    
-    for url in urls:
+    url = f"https://m.place.naver.com/hospital/{place_id}/review/visitor"
+    reviews = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"]
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            viewport={"width": 390, "height": 844},
+            locale="ko-KR",
+        )
+        page = context.new_page()
         try:
-            resp = requests.get(url, headers=mobile_headers, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                result = data.get("result", data)
-                reviews_raw = (
-                    result.get("visitorReviews") or
-                    result.get("reviews") or
-                    result.get("items") or []
-                )
-                if reviews_raw:
-                    reviews = []
-                    for r in reviews_raw:
-                        writer = r.get("writerInfo", {})
-                        author = writer.get("nickname", "익명") if isinstance(writer, dict) else "익명"
-                        content = r.get("body", r.get("content", r.get("text", ""))) or ""
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            time.sleep(2)
+            review_items = page.query_selector_all("li.place_review_item, div.review_item, li[class*='review']")
+            if not review_items:
+                review_items = page.query_selector_all("[class*='ReviewItem'], [class*='review_item'], [data-review-id]")
+            print(f"  📋 리뷰 항목 감지: {len(review_items)}개")
+            for i, item in enumerate(review_items[:20]):
+                try:
+                    author_el = item.query_selector("[class*='nickname'], [class*='author'], [class*='writer']")
+                    author = author_el.inner_text().strip() if author_el else "익명"
+                    content_el = item.query_selector("[class*='body'], [class*='content'], [class*='text'], p")
+                    content = content_el.inner_text().strip() if content_el else ""
+                    date_el = item.query_selector("[class*='date'], [class*='time'], time")
+                    created_at = date_el.inner_text().strip() if date_el else ""
+                    visit_el = item.query_selector("[class*='visit'], [class*='count']")
+                    visit_text = visit_el.inner_text().strip() if visit_el else "0"
+                    visit_count = int(''.join(filter(str.isdigit, visit_text)) or 0)
+                    if content:
                         reviews.append({
-                            "id": str(r.get("id", r.get("reviewId", ""))),
+                            "id": f"{place_id}_{i}_{hash(content) % 100000}",
                             "author": author,
                             "content": content,
-                            "visit_count": r.get("visitCount", 0),
-                            "created_at": r.get("created", r.get("createdAt", r.get("visitDate", ""))),
+                            "visit_count": visit_count,
+                            "created_at": created_at,
                         })
-                    print(f"  ✅ API 성공: {url[:60]}...")
-                    return reviews
+                except:
+                    continue
         except Exception as e:
-            print(f"  ⚠️  {url[:60]}... → {str(e)[:50]}")
-            continue
-    
-    return []
+            print(f"  ❌ 페이지 로드 실패: {e}")
+        finally:
+            browser.close()
+    return reviews
+
 
 def save_reviews(hospital: dict, reviews: list) -> list:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     new_reviews = []
     now = datetime.now().isoformat()
-
     for r in reviews:
         review_id = f"{hospital['place_id']}_{r['id']}"
         existing = c.execute("SELECT id FROM reviews WHERE id = ?", (review_id,)).fetchone()
-        if not existing and r['id']:
+        if not existing:
             sentiment = analyze_sentiment(r["content"])
             c.execute("""
                 INSERT INTO reviews
@@ -165,10 +143,10 @@ def save_reviews(hospital: dict, reviews: list) -> list:
                 sentiment, r["created_at"], now,
             ))
             new_reviews.append({**r, "hospital_name": hospital["name"], "hospital_id": hospital["id"], "sentiment": sentiment})
-
     conn.commit()
     conn.close()
     return new_reviews
+
 
 def log_crawl(hospital_id, new_count, total_count, status, error_msg=""):
     conn = sqlite3.connect(DB_PATH)
@@ -180,26 +158,18 @@ def log_crawl(hospital_id, new_count, total_count, status, error_msg=""):
     conn.commit()
     conn.close()
 
+
 def run_crawler():
     print(f"\n{'='*50}")
-    print(f"🏥 네이버 플레이스 리뷰 크롤러 시작")
+    print(f"🏥 네이버 플레이스 리뷰 크롤러 시작 (Playwright)")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}\n")
-
     init_db()
     all_new_reviews = []
-
     for i, hospital in enumerate(HOSPITALS):
         print(f"[{i+1}/{len(HOSPITALS)}] {hospital['name']} 수집 중...")
         try:
-            reviews = []
-            for page in range(1, 4):
-                page_reviews = fetch_reviews_v2(hospital, page=page)
-                if not page_reviews:
-                    break
-                reviews.extend(page_reviews)
-                time.sleep(REQUEST_DELAY + random.uniform(0, 2))
-
+            reviews = fetch_reviews_playwright(hospital)
             new_reviews = save_reviews(hospital, reviews)
             log_crawl(hospital["id"], len(new_reviews), len(reviews), "success")
             print(f"  ✅ 전체: {len(reviews)}개 | 신규: {len(new_reviews)}개")
@@ -208,14 +178,13 @@ def run_crawler():
         except Exception as e:
             log_crawl(hospital["id"], 0, 0, "error", str(e))
             print(f"  ❌ 오류: {e}")
-
         if i < len(HOSPITALS) - 1:
-            delay = REQUEST_DELAY + random.uniform(1, 3)
+            delay = REQUEST_DELAY + random.uniform(2, 4)
             print(f"  ⏳ {delay:.1f}초 대기...\n")
             time.sleep(delay)
-
     print(f"\n✅ 크롤링 완료 | 신규 리뷰 총 {len(all_new_reviews)}개\n")
     return all_new_reviews
+
 
 if __name__ == "__main__":
     run_crawler()
