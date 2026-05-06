@@ -1,0 +1,86 @@
+{
+  "hospitals": [
+    {
+      "id": "hospital_1",
+      "name": "리더스영상의학과",
+      "place_id": "36188756",
+      "type": "hospital",
+      "slack_channel": "#004-병원-1-리더스영상의학과"
+    },
+    {
+      "id": "hospital_2",
+      "name": "수유바른정형외과",
+      "place_id": "1233122822",
+      "type": "hospital",
+      "slack_channel": "#004-병원-2-수유바른정형외과"
+    },
+    {
+      "id": "hospital_3",
+      "name": "바로서구병원",
+      "place_id": "1090577785",
+      "type": "hospital",
+      "slack_channel": "#004-병원-3-바로서구병원"
+    },
+    {
+      "id": "hospital_4",
+      "name": "신림연세정형외과",
+      "place_id": "4967169346",
+      "type": "hospital",
+      "slack_channel": "#004-병원-4-신림연세정형외과"
+    },
+    {
+      "id": "hospital_5",
+      "name": "루빈여성의원",
+      "place_id": "1947304457",
+      "type": "hospital",
+      "slack_channel": "#004-병원-5-루빈여성의원"
+    },
+    {
+      "id": "hospital_6",
+      "name": "더편한장사랑내과",
+      "place_id": "1261710978",
+      "type": "hospital",
+      "slack_channel": "#004-병원-6-더편한장사랑내과"
+    },
+    {
+      "id": "hospital_7",
+      "name": "프라임영상의학과",
+      "place_id": "1504467688",
+      "type": "hospital",
+      "slack_channel": "#004-병원-7-프라임영상의학과"
+    },
+    {
+      "id": "hospital_8",
+      "name": "정앤정메디컬",
+      "place_id": "1464317844",
+      "type": "hospital",
+      "slack_channel": "#004-병원-8-정앤정메디컬"
+    }
+  ],
+  "slack": {
+    "webhook_url": "YOUR_SLACK_WEBHOOK_URL",
+    "alert_channel": "#004-병원-리뷰-전체알림"
+  },
+  "crawl_interval_seconds": 3600,
+  "request_delay_seconds": 4,
+  "sentiment": {
+    "negative_keywords": [
+      "불친절", "불편", "별로", "최악", "실망", "후회", "짜증",
+      "대기", "오래", "기다림", "늦", "느림",
+      "불성실", "무성의", "건성", "대충", "형식적",
+      "비싸", "바가지", "과잉진료", "강요",
+      "불결", "지저분", "냄새",
+      "설명 없", "설명없", "무시", "퉁명", "무뚝뚝",
+      "재방문 안", "비추", "추천 안", "추천안"
+    ],
+    "positive_keywords": [
+      "친절", "상냥", "자세히", "자세하게", "꼼꼼", "정성",
+      "만족", "좋았", "좋아요", "훌륭", "최고", "감동",
+      "빠르", "신속", "편리", "편했",
+      "깔끔", "청결", "쾌적", "깨끗",
+      "추천", "재방문", "또 올", "다음에도",
+      "전문적", "전문성", "실력", "믿음", "신뢰",
+      "설명 잘", "설명이 잘", "이해하기 쉽"
+    ]
+  }
+}

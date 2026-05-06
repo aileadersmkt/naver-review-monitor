@@ -1,0 +1,65 @@
+name: 네이버 플레이스 리뷰 모니터링
+
+on:
+  schedule:
+    # 매 1시간 실행 (UTC 기준 → KST +9)
+    - cron: "0 * * * *"
+    # 매일 오전 9시 일간 리포트 (UTC 00:00 = KST 09:00)
+    - cron: "0 0 * * *"
+    # 매주 월요일 오전 9시 10분 주간 요약
+    - cron: "10 0 * * 1"
+
+  # 수동 실행 가능
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드 (once / report / weekly)"
+        required: false
+        default: "once"
+
+jobs:
+  crawl-and-notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      # DB를 캐시로 유지 (매 실행마다 누적)
+      - name: DB 캐시 복원
+        uses: actions/cache@v4
+        with:
+          path: data/reviews.db
+          key: reviews-db-${{ github.run_id }}
+          restore-keys: |
+            reviews-db-
+
+      - name: 크롤링 실행
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "report" ]; then
+            python main.py report
+          elif [ "${{ github.event.inputs.mode }}" = "weekly" ]; then
+            python main.py weekly
+          else
+            python main.py once
+          fi
+
+      - name: DB 아티팩트 저장 (백업)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reviews-db-backup
+          path: data/reviews.db
+          retention-days: 30
