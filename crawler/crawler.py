@@ -90,22 +90,29 @@ def fetch_reviews_playwright(hospital: dict) -> list:
         page = context.new_page()
         try:
             page.goto(url, wait_until="networkidle", timeout=30000)
-            time.sleep(2)
-            review_items = page.query_selector_all("li.place_review_item, div.review_item, li[class*='review']")
+            time.sleep(3)
+
+            review_items = page.query_selector_all("li.place_apply_pui")
             if not review_items:
-                review_items = page.query_selector_all("[class*='ReviewItem'], [class*='review_item'], [data-review-id]")
+                review_items = page.query_selector_all("[class*='ReviewItem'], [class*='review_item']")
+
             print(f"  📋 리뷰 항목 감지: {len(review_items)}개")
+
             for i, item in enumerate(review_items[:20]):
                 try:
                     author_el = item.query_selector("[class*='nickname'], [class*='author'], [class*='writer']")
                     author = author_el.inner_text().strip() if author_el else "익명"
-                    content_el = item.query_selector("[class*='body'], [class*='content'], [class*='text'], p")
+
+                    content_el = item.query_selector("a.pui__GStJHb, [class*='body'], [class*='content'], p")
                     content = content_el.inner_text().strip() if content_el else ""
+
                     date_el = item.query_selector("[class*='date'], [class*='time'], time")
                     created_at = date_el.inner_text().strip() if date_el else ""
+
                     visit_el = item.query_selector("[class*='visit'], [class*='count']")
                     visit_text = visit_el.inner_text().strip() if visit_el else "0"
                     visit_count = int(''.join(filter(str.isdigit, visit_text)) or 0)
+
                     if content:
                         reviews.append({
                             "id": f"{place_id}_{i}_{hash(content) % 100000}",
@@ -116,6 +123,7 @@ def fetch_reviews_playwright(hospital: dict) -> list:
                         })
                 except:
                     continue
+
         except Exception as e:
             print(f"  ❌ 페이지 로드 실패: {e}")
         finally:
