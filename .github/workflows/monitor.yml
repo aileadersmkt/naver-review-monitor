@@ -2,14 +2,9 @@ name: 네이버 플레이스 리뷰 모니터링
 
 on:
   schedule:
-    # 매 1시간 실행 (UTC 기준 → KST +9)
     - cron: "0 * * * *"
-    # 매일 오전 9시 일간 리포트 (UTC 00:00 = KST 09:00)
     - cron: "0 0 * * *"
-    # 매주 월요일 오전 9시 10분 주간 요약
     - cron: "10 0 * * 1"
-
-  # 수동 실행 가능
   workflow_dispatch:
     inputs:
       mode:
@@ -35,10 +30,9 @@ jobs:
       - name: 패키지 설치
         run: pip install -r requirements.txt
 
-        - name: Playwright 브라우저 설치
+      - name: Playwright 브라우저 설치
         run: playwright install chromium --with-deps
 
-      # DB를 캐시로 유지 (매 실행마다 누적)
       - name: DB 캐시 복원
         uses: actions/cache@v4
         with:
@@ -59,7 +53,7 @@ jobs:
             python main.py once
           fi
 
-      - name: DB 아티팩트 저장 (백업)
+      - name: DB 아티팩트 저장
         uses: actions/upload-artifact@v4
         if: always()
         with:
