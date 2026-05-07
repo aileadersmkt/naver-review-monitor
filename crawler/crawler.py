@@ -1,6 +1,5 @@
 """
-네이버 플레이스 리뷰 크롤러 (Playwright 브라우저 방식)
-실제 브라우저처럼 페이지를 열어서 리뷰를 수집
+네이버 플레이스 리뷰 크롤러 (Playwright 디버깅 모드)
 """
 
 import json
@@ -93,37 +92,57 @@ def fetch_reviews_playwright(hospital: dict) -> list:
             time.sleep(3)
 
             review_items = page.query_selector_all("li.place_apply_pui")
-            if not review_items:
-                review_items = page.query_selector_all("[class*='ReviewItem'], [class*='review_item']")
-
             print(f"  📋 리뷰 항목 감지: {len(review_items)}개")
+
+            # 디버깅: 첫 번째 리뷰의 HTML 출력
+            if review_items and hospital == HOSPITALS[0]:
+                first_html = review_items[0].inner_html()
+                print(f"  🔍 첫 번째 리뷰 HTML (처음 500자):")
+                print(f"  {first_html[:500]}")
+                print(f"  ─────────────────")
 
             for i, item in enumerate(review_items[:20]):
                 try:
+                    # 모든 텍스트 추출
+                    full_text = item.inner_text().strip()
+                    
+                    # 작성자
                     author_el = item.query_selector("[class*='nickname'], [class*='author'], [class*='writer']")
-                    author = author_el.text_content().strip() if author_el else "익명"
+                    author = author_el.inner_text().strip() if author_el else "익명"
 
-                    content_el = item.query_selector("a.pui__GStJHb")
-                    if not content_el:
-                        content_el = item.query_selector("[class*='body'], [class*='content'], p")
-                    content = content_el.text_content().strip() if content_el else ""
-
-                    date_el = item.query_selector("[class*='date'], [class*='time'], time")
-                    created_at = date_el.text_content().strip() if date_el else ""
-
-                    visit_el = item.query_selector("[class*='visit'], [class*='count']")
-                    visit_text = visit_el.text_content().strip() if visit_el else "0"
-                    visit_count = int(''.join(filter(str.isdigit, visit_text)) or 0)
+                    # 리뷰 내용 - 여러 시도
+                    content = ""
+                    selectors = [
+                        "a.pui__GStJHb",
+                        "a[data-pui-click-code='rvshowmore']",
+                        "a[data-pui-click-code='rvshowless']",
+                        "div.pui__vn15t2 a",
+                        "[class*='vn15t2'] a",
+                    ]
+                    for sel in selectors:
+                        el = item.query_selector(sel)
+                        if el:
+                            text = el.inner_text().strip()
+                            if text and len(text) > 5:
+                                content = text
+                                break
+                    
+                    # 그래도 없으면 전체 텍스트에서 추출
+                    if not content and full_text:
+                        lines = [l.strip() for l in full_text.split('\n') if l.strip() and len(l.strip()) > 10]
+                        if lines:
+                            content = lines[0]
 
                     if content:
                         reviews.append({
                             "id": f"{place_id}_{i}_{hash(content) % 100000}",
                             "author": author,
                             "content": content,
-                            "visit_count": visit_count,
-                            "created_at": created_at,
+                            "visit_count": 0,
+                            "created_at": "",
                         })
-                except:
+                except Exception as e:
+                    print(f"  ⚠️ item {i} 오류: {e}")
                     continue
 
         except Exception as e:
