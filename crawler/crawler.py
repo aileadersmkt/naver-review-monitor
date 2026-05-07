@@ -1,73 +1,49 @@
 """
-네이버 플레이스 리뷰 크롤러 (Playwright 디버깅 모드)
+네이버 플레이스 리뷰 크롤러 (Playwright + Supabase)
 """
 
 import json
 import time
-import sqlite3
+import os
 import random
+import requests
 from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
 CONFIG_PATH = BASE_DIR / "config" / "hospitals.json"
-DB_PATH = BASE_DIR / "data" / "reviews.db"
 
 with open(CONFIG_PATH) as f:
     CONFIG = json.load(f)
 
 HOSPITALS = CONFIG["hospitals"]
 REQUEST_DELAY = CONFIG.get("request_delay_seconds", 4)
-NEG_KEYWORDS = CONFIG["sentiment"]["negative_keywords"]
-POS_KEYWORDS = CONFIG["sentiment"]["positive_keywords"]
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
 
 
-def analyze_sentiment(content: str) -> str:
-    if not content:
-        return "neutral"
-    neg = sum(1 for kw in NEG_KEYWORDS if kw in content)
-    pos = sum(1 for kw in POS_KEYWORDS if kw in content)
-    if neg > pos:
-        return "negative"
-    elif pos > neg:
-        return "positive"
-    return "neutral"
+def supabase_get(table: str, params: dict = None) -> list:
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    resp = requests.get(url, headers=SUPABASE_HEADERS, params=params, timeout=10)
+    return resp.json() if resp.status_code == 200 else []
 
 
-def init_db():
-    DB_PATH.parent.mkdir(exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            id TEXT PRIMARY KEY,
-            hospital_id TEXT NOT NULL,
-            hospital_name TEXT NOT NULL,
-            place_id TEXT NOT NULL,
-            author TEXT,
-            content TEXT,
-            visit_count INTEGER DEFAULT 0,
-            sentiment TEXT DEFAULT 'neutral',
-            created_at TEXT,
-            crawled_at TEXT,
-            is_new INTEGER DEFAULT 1,
-            notified INTEGER DEFAULT 0
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS crawl_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hospital_id TEXT,
-            crawled_at TEXT,
-            new_count INTEGER DEFAULT 0,
-            total_count INTEGER DEFAULT 0,
-            status TEXT,
-            error_msg TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-    print("✅ DB 초기화 완료")
+def supabase_insert(table: str, data: dict) -> bool:
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    resp = requests.post(url, headers=SUPABASE_HEADERS, json=data, timeout=10)
+    return resp.status_code in [200, 201]
+
+
+def review_exists(review_id: str) -> bool:
+    result = supabase_get("reviews", {"id": f"eq.{review_id}", "select": "id"})
+    return len(result) > 0
 
 
 def fetch_reviews_playwright(hospital: dict) -> list:
@@ -79,7 +55,7 @@ def fetch_reviews_playwright(hospital: dict) -> list:
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"]
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -94,55 +70,30 @@ def fetch_reviews_playwright(hospital: dict) -> list:
             review_items = page.query_selector_all("li.place_apply_pui")
             print(f"  📋 리뷰 항목 감지: {len(review_items)}개")
 
-            # 디버깅: 첫 번째 리뷰의 HTML 출력
-            if review_items and hospital == HOSPITALS[0]:
-                first_html = review_items[0].inner_html()
-                print(f"  🔍 첫 번째 리뷰 HTML (처음 500자):")
-                print(f"  {first_html[:500]}")
-                print(f"  ─────────────────")
-
             for i, item in enumerate(review_items[:20]):
                 try:
-                    # 모든 텍스트 추출
-                    full_text = item.inner_text().strip()
-                    
-                    # 작성자
-                    author_el = item.query_selector("[class*='nickname'], [class*='author'], [class*='writer']")
-                    author = author_el.inner_text().strip() if author_el else "익명"
-
-                    # 리뷰 내용 - 여러 시도
+                    # 리뷰 내용
                     content = ""
-                    selectors = [
-                        "a.pui__GStJHb",
-                        "a[data-pui-click-code='rvshowmore']",
-                        "a[data-pui-click-code='rvshowless']",
-                        "div.pui__vn15t2 a",
-                        "[class*='vn15t2'] a",
-                    ]
-                    for sel in selectors:
+                    for sel in ["a.pui__GStJHb", "a[data-pui-click-code='rvshowmore']", "a[data-pui-click-code='rvshowless']"]:
                         el = item.query_selector(sel)
                         if el:
                             text = el.inner_text().strip()
                             if text and len(text) > 5:
                                 content = text
                                 break
-                    
-                    # 그래도 없으면 전체 텍스트에서 추출
-                    if not content and full_text:
-                        lines = [l.strip() for l in full_text.split('\n') if l.strip() and len(l.strip()) > 10]
+
+                    if not content:
+                        full = item.inner_text().strip()
+                        lines = [l.strip() for l in full.split('\n') if l.strip() and len(l.strip()) > 10]
                         if lines:
                             content = lines[0]
 
                     if content:
                         reviews.append({
                             "id": f"{place_id}_{i}_{hash(content) % 100000}",
-                            "author": author,
                             "content": content,
-                            "visit_count": 0,
-                            "created_at": "",
                         })
-                except Exception as e:
-                    print(f"  ⚠️ item {i} 오류: {e}")
+                except:
                     continue
 
         except Exception as e:
@@ -153,48 +104,47 @@ def fetch_reviews_playwright(hospital: dict) -> list:
 
 
 def save_reviews(hospital: dict, reviews: list) -> list:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
     new_reviews = []
     now = datetime.now().isoformat()
+
     for r in reviews:
         review_id = f"{hospital['place_id']}_{r['id']}"
-        existing = c.execute("SELECT id FROM reviews WHERE id = ?", (review_id,)).fetchone()
-        if not existing:
-            sentiment = analyze_sentiment(r["content"])
-            c.execute("""
-                INSERT INTO reviews
-                    (id, hospital_id, hospital_name, place_id, author, content, visit_count, sentiment, created_at, crawled_at, is_new, notified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
-            """, (
-                review_id, hospital["id"], hospital["name"], hospital["place_id"],
-                r["author"], r["content"], r["visit_count"],
-                sentiment, r["created_at"], now,
-            ))
-            new_reviews.append({**r, "hospital_name": hospital["name"], "hospital_id": hospital["id"], "sentiment": sentiment})
-    conn.commit()
-    conn.close()
+        if not review_exists(review_id):
+            data = {
+                "id": review_id,
+                "hospital_id": hospital["id"],
+                "hospital_name": hospital["name"],
+                "place_id": hospital["place_id"],
+                "content": r["content"],
+                "crawled_at": now,
+                "is_new": 1,
+                "notified": 0,
+            }
+            if supabase_insert("reviews", data):
+                new_reviews.append({**r, "hospital_name": hospital["name"], "hospital_id": hospital["id"]})
+
     return new_reviews
 
 
 def log_crawl(hospital_id, new_count, total_count, status, error_msg=""):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO crawl_log (hospital_id, crawled_at, new_count, total_count, status, error_msg)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (hospital_id, datetime.now().isoformat(), new_count, total_count, status, error_msg))
-    conn.commit()
-    conn.close()
+    supabase_insert("crawl_log", {
+        "hospital_id": hospital_id,
+        "crawled_at": datetime.now().isoformat(),
+        "new_count": new_count,
+        "total_count": total_count,
+        "status": status,
+        "error_msg": error_msg,
+    })
 
 
 def run_crawler():
     print(f"\n{'='*50}")
-    print(f"🏥 네이버 플레이스 리뷰 크롤러 시작 (Playwright)")
+    print(f"🏥 네이버 플레이스 리뷰 크롤러 시작 (Playwright + Supabase)")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}\n")
-    init_db()
+
     all_new_reviews = []
+
     for i, hospital in enumerate(HOSPITALS):
         print(f"[{i+1}/{len(HOSPITALS)}] {hospital['name']} 수집 중...")
         try:
@@ -207,10 +157,12 @@ def run_crawler():
         except Exception as e:
             log_crawl(hospital["id"], 0, 0, "error", str(e))
             print(f"  ❌ 오류: {e}")
+
         if i < len(HOSPITALS) - 1:
             delay = REQUEST_DELAY + random.uniform(2, 4)
             print(f"  ⏳ {delay:.1f}초 대기...\n")
             time.sleep(delay)
+
     print(f"\n✅ 크롤링 완료 | 신규 리뷰 총 {len(all_new_reviews)}개\n")
     return all_new_reviews
 
