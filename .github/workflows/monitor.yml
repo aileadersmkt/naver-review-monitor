@@ -35,30 +35,14 @@ jobs:
           pip install playwright
           python -m playwright install chromium --with-deps
 
-      - name: DB 캐시 복원
-        uses: actions/cache@v4
-        with:
-          path: data/reviews.db
-          key: reviews-db-${{ github.run_id }}
-          restore-keys: |
-            reviews-db-
-
       - name: 크롤링 실행
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           if [ "${{ github.event.inputs.mode }}" = "report" ]; then
             python main.py report
-          elif [ "${{ github.event.inputs.mode }}" = "weekly" ]; then
-            python main.py weekly
           else
             python main.py once
           fi
-
-      - name: DB 아티팩트 저장
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: reviews-db-backup
-          path: data/reviews.db
-          retention-days: 30
